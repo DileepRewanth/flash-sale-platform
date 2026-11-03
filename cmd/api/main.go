@@ -33,6 +33,7 @@ type config struct {
 	Addr, RedisAddr, Sale, AdminToken string
 	DevMode, AutoRepair               bool
 	Units, Buckets, MaxInFlight       int
+	MaxOrderInFlight                  int
 	HoldTTL, Grace, Hard              time.Duration
 	TokenKey, WebhookKey              []byte
 }
@@ -87,7 +88,7 @@ func main() {
 	}
 	srv := httpapi.New(httpapi.Config{
 		Sale: cfg.Sale, HoldTTL: cfg.HoldTTL, HardDeadline: cfg.Hard, WebhookSecret: cfg.WebhookKey,
-		AdminToken: cfg.AdminToken, MaxInFlight: cfg.MaxInFlight, MaxWebhooks: 256,
+		AdminToken: cfg.AdminToken, MaxInFlight: cfg.MaxInFlight, MaxOrderInFlight: cfg.MaxOrderInFlight, MaxWebhooks: 256,
 	}, gate, st, signer, w, m, provider.NetCharges, time.Now)
 
 	go w.Run(ctx, 100*time.Millisecond)
@@ -119,6 +120,9 @@ func loadConfig(logger *slog.Logger) (config, error) {
 		return c, err
 	}
 	if c.Buckets, err = envInt("SALE_BUCKETS", 8); err != nil {
+		return c, err
+	}
+	if c.MaxOrderInFlight, err = envInt("MAX_ORDER_INFLIGHT", 256); err != nil {
 		return c, err
 	}
 	if c.MaxInFlight, err = envInt("MAX_INFLIGHT", 1024); err != nil {

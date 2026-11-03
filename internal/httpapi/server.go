@@ -1,9 +1,10 @@
 // Package httpapi exposes the reservation, order, webhook and admin endpoints.
 //
-// Customer routes and the webhook route draw from separate concurrency pools, a
-// bulkhead, so a browse or reservation flood can never starve payment webhooks.
-// When a pool is full the request is shed at once with Retry-After, because a
-// queued request would only time out later and waste capacity on the way.
+// Reservations, order routes and webhooks each draw from their own concurrency
+// pool, a bulkhead. A reservation flood can therefore never shed a user who is
+// already paying, and nothing can starve payment webhooks. When a pool is full the
+// request is shed at once with Retry-After, because a queued request would only
+// time out later and waste capacity on the way.
 package httpapi
 
 import (
@@ -33,13 +34,14 @@ import (
 
 // Config holds the server settings.
 type Config struct {
-	Sale          string
-	HoldTTL       time.Duration
-	HardDeadline  time.Duration
-	WebhookSecret []byte
-	AdminToken    string
-	MaxInFlight   int // customer requests per instance; 0 means unlimited
-	MaxWebhooks   int // webhook requests per instance; 0 means unlimited
+	Sale             string
+	HoldTTL          time.Duration
+	HardDeadline     time.Duration
+	WebhookSecret    []byte
+	AdminToken       string
+	MaxInFlight      int // reservation requests per instance; 0 means unlimited
+	MaxOrderInFlight int // order creation, status and cancel per instance; 0 means unlimited
+	MaxWebhooks      int // webhook requests per instance; 0 means unlimited
 }
 
 // Server wires the HTTP layer to the gate, the store and the worker.
@@ -54,6 +56,7 @@ type Server struct {
 	now      func() time.Time
 	paused   atomic.Bool
 	customer chan struct{}
+	orders   chan struct{}
 	hooks    chan struct{}
 	drift    reconcile.DriftTracker
 	mux      *http.ServeMux
@@ -66,13 +69,16 @@ func New(cfg Config, gate *inventory.Gate, st *store.Memory, signer *token.Signe
 	if cfg.MaxInFlight > 0 {
 		s.customer = make(chan struct{}, cfg.MaxInFlight)
 	}
+	if cfg.MaxOrderInFlight > 0 {
+		s.orders = make(chan struct{}, cfg.MaxOrderInFlight)
+	}
 	if cfg.MaxWebhooks > 0 {
 		s.hooks = make(chan struct{}, cfg.MaxWebhooks)
 	}
 	s.route("POST /v1/sales/{sale}/holds", "reserve", s.customer, s.reserve)
-	s.route("POST /v1/orders", "create_order", s.customer, s.createOrder)
-	s.route("GET /v1/orders/{id}", "get_order", s.customer, s.getOrder)
-	s.route("POST /v1/orders/{id}/cancel", "cancel_order", s.customer, s.cancelOrder)
+	s.route("POST /v1/orders", "create_order", s.orders, s.createOrder)
+	s.route("GET /v1/orders/{id}", "get_order", s.orders, s.getOrder)
+	s.route("POST /v1/orders/{id}/cancel", "cancel_order", s.orders, s.cancelOrder)
 	s.route("POST /webhooks/psp", "webhook", s.hooks, s.webhook)
 	s.route("GET /v1/admin/sales/{sale}/audit", "audit", nil, s.audit)
 	s.route("POST /v1/admin/sales/{sale}/repair", "repair", nil, s.repair)

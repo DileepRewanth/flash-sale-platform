@@ -37,8 +37,8 @@ Spike of 40,000 users over 15 s against 10,000 units, on one laptop with an embe
 
 | Run | Throughput | Reserve p99 | Order p99 | Oversold | Duplicate charges |
 |---|---|---|---|---|---|
-| Without effective shedding | 830 requests/sec | 1,569 ms | 2,287 ms | 0 | 0 |
-| With load shedding | 3,258 requests/sec | 157 ms | 29 ms | 0 | 0 |
+| Without effective shedding | 935 requests/sec | 1,009 ms | 194 ms | 0 | 0 |
+| With load shedding | 3,250 requests/sec | 179 ms | 136 ms | 0 | 0 |
 
 ## How to read this repository
 

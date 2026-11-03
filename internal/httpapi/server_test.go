@@ -42,7 +42,7 @@ func newTestServer(t *testing.T, units int, maxInFlight int) (*httptest.Server, 
 	signer, _ := token.NewSigner([]byte(strings.Repeat("k", 32)))
 	fake := psp.NewFake()
 	w := &worker.Worker{Store: st, Gate: gate, PSP: fake, Sale: "s", Now: time.Now, ResendWindow: 5 * time.Minute, SweepMargin: 10 * time.Second}
-	s := New(Config{Sale: "s", HoldTTL: 5 * time.Minute, HardDeadline: 30 * time.Minute, WebhookSecret: secret, AdminToken: "admin", MaxInFlight: maxInFlight, MaxWebhooks: 8},
+	s := New(Config{Sale: "s", HoldTTL: 5 * time.Minute, HardDeadline: 30 * time.Minute, WebhookSecret: secret, AdminToken: "admin", MaxInFlight: maxInFlight, MaxOrderInFlight: 8, MaxWebhooks: 8},
 		gate, st, signer, w, metrics.New(), fake.NetCharges, time.Now)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -138,6 +138,9 @@ func TestLoadSheddingRejectsFastWhenFull(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
 		t.Fatalf("got %d Retry-After=%q, want 503 with Retry-After", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+	if code, _ := call(t, "GET", ts.URL+"/v1/orders/none", map[string]string{"X-User-ID": "alice"}, nil); code == http.StatusServiceUnavailable {
+		t.Fatal("order routes have their own pool and must not be shed by a reservation flood")
 	}
 	ev, _ := json.Marshal(map[string]string{"event_id": "e", "attempt_id": "none", "status": "FAILED"})
 	now := strconv.FormatInt(time.Now().Unix(), 10)

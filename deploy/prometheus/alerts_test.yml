@@ -55,3 +55,38 @@ tests:
             exp_annotations:
               summary: An order has more than one kept charge
               runbook: docs/RUNBOOK.md#duplicate-charge-detected
+
+  - interval: 1m
+    input_series:
+      - series: 'flashsale_charged_without_order{instance="api-1"}'
+        values: '0 1 1 1 1 1'
+    alert_rule_test:
+      # A charge briefly ahead of its confirmation is normal; only a sustained one pages.
+      - eval_time: 2m
+        alertname: FlashSaleChargedWithoutOrder
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FlashSaleChargedWithoutOrder
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: A charge has no confirmed order and no refund
+              runbook: docs/RUNBOOK.md#charged-without-an-order
+
+  - interval: 1m
+    input_series:
+      - series: 'flashsale_stuck_payments{instance="api-1"}'
+        values: '0 0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FlashSaleStuckPayments
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FlashSaleStuckPayments
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: Payments are unresolved past the hard deadline
+              runbook: docs/RUNBOOK.md#payments-stuck-past-the-hard-deadline

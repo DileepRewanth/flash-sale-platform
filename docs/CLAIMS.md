@@ -23,9 +23,9 @@ Each feature is labelled built and tested, measured and extrapolated, or design 
 | Redis wipe and rebuild causes no oversell | Built and tested | `TestRedisWipeAndRebuildCausesNoOversell` |
 | Oversell, duplicate charge, orphan charge and drift detection | Built and tested | `internal/reconcile` tests |
 | Drift repair after two consecutive scans | Built and tested | `TestDriftTrackerNeedsTwoScans`, `TestRepairFixesRedisAfterRechecking` |
-| Load shedding with a separate webhook bulkhead | Built and tested | `TestLoadSheddingRejectsFastWhenFull` |
+| Load shedding with separate pools for reservations, order routes and webhooks | Built and tested | `TestLoadSheddingRejectsFastWhenFull` |
 | Reservation kill switch | Built and tested | `TestPauseKillSwitch` |
-| Alert rules fire on their conditions | Built, tested with promtool in CI | `deploy/prometheus/alerts_test.yml` |
+| Alert rules | All seven pass promtool's syntax check in CI. Five have firing tests: oversell, duplicate charge, charged without order, stuck payments and drift. The latency and burn-rate rules have none. No alert has been delivered end to end. | `deploy/prometheus/alerts_test.yml` |
 | Autoscaling signal exported and consumed | Metric built; KEDA config written but not applied to a cluster; replica decisions simulated from real measurements | `flashsale_http_inflight_requests`, `deploy/k8s/keda-scaledobject.yaml`, `docs/results/laptop-spike.json` |
 | Spike behaviour and capacity inputs | Measured on a laptop against embedded Redis, then extrapolated | `docs/CAPACITY.md`, `docs/results/laptop-spike.json`, `docs/results/laptop-spike-shedding.json` |
 | Durable store in Postgres | Design: schema provided; the prototype's in-memory store mirrors its transactions | `db/schema.sql`, `internal/store` |

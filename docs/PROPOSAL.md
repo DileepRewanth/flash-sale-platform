@@ -81,7 +81,7 @@ The diagram and a walkthrough are in [architecture/README.md](architecture/READM
 - **Virtual waiting room [Design].** Tickets are stateless signed tokens carrying the arrival time plus random jitter inside a one-second bucket, so no central counter exists. Users who arrive before a scheduled opening are randomised across a window, so arriving early gives no edge. A controller advances one published watermark, paced by downstream health and payment capacity. Status is a CDN-cached document, so origin load does not grow with queue size. With 10M users polling every 20 s, the edge sees 500,000 requests/sec while the origin sees about one request per edge location per cache TTL.
 - **Rate limiting and bot protection [Design].** Bought from the CDN or WAF vendor: per-IP and per-account limits, bot scoring and proof-of-work challenges for suspicious clients. The one-unit-per-user rule and the per-user claim in Redis **[Built]** make hoarding unprofitable.
 - **Request coalescing [Design].** CDN request collapsing plus short TTLs on availability documents. Availability is shown in bands rather than exact counts, which is both cacheable and allowed to be stale.
-- **Origin load shedding [Built].** Customer routes and the webhook route have separate concurrency pools, a bulkhead. When a pool is full the request is rejected at once with a jittered `Retry-After`, rather than queued.
+- **Origin load shedding [Built].** Reservations, order routes and webhooks each have their own concurrency pool, a bulkhead, so a reservation flood can never shed a user who is already paying. When a pool is full the request is rejected at once with a jittered `Retry-After`, rather than queued.
 
 ### 2.3 Inventory reservation design [Built]
 
@@ -151,6 +151,15 @@ Traffic grows by about 16,600 requests/sec every second during the 30-second ram
 - **Unscheduled spikes.** The waiting room is always armed and admits only what current capacity can serve, so autoscaling never sits on the correctness path. Autoscaling then grows capacity and the admission rate follows. **[Design]**
 - **Scaling signal.** In-flight requests per replica, exported by the API. **[Built]** The KEDA trigger consumes it **[Design, config written]**, and the load generator replays real measurements through the HPA formula **[Measured, simulation]**.
 
+### 2.9 Security and card data
+
+- **Card data never touches our servers [Design].** The client enters card details into the provider's hosted fields or SDK, and our API receives only a payment token. Card numbers stay out of our systems, which shrinks PCI DSS scope to the simplest self-assessment questionnaire.
+- **Hold tokens [Built].** HMAC-SHA256 signed, verified in constant time, bound to one user and short-lived.
+- **Webhooks [Built].** HMAC over the timestamp and body, a 5-minute replay window, and deduplication by event ID.
+- **Admin endpoints [Built].** A bearer token compared in constant time. In production they also sit behind the internal network and single sign-on **[Design]**.
+- **Secrets [Built].** Read only from the environment. Outside development mode the service refuses to start without them, and CI scans the full git history for leaks.
+- **Abuse [Design].** Bot scoring and per-account and per-IP limits at the edge, on top of the one-unit-per-user rule that Redis and the durable store both enforce **[Built]**.
+
 ---
 
 ## 3. Scalability, performance and fault tolerance
@@ -173,9 +182,9 @@ Reject in this order, cheapest and least valuable first:
 2. Waiting room joins beyond the bot and rate limits.
 3. New admissions, by slowing the watermark.
 4. Reservation requests from admitted users, with `Retry-After`.
-5. Never shed: payment webhooks, order status for users mid-payment, and the payment worker.
+5. Protected by their own pools, so reservation traffic can never shed them: order creation and order status for users mid-payment, and payment webhooks. The payment worker serves no external requests at all.
 
-The origin pools and the webhook bulkhead are **[Built]**; the edge stages are **[Design]**.
+The three origin pools are **[Built]**; the edge stages are **[Design]**.
 
 ### 3.4 Retries, backoff and jitter
 
@@ -185,7 +194,7 @@ The origin pools and the webhook bulkhead are **[Built]**; the edge stages are *
 
 ### 3.5 Circuit breakers, bulkheads and timeouts
 
-- **Bulkheads [Built].** Separate concurrency pools for customer traffic and webhooks.
+- **Bulkheads [Built].** Separate concurrency pools for reservations, order routes and webhooks.
 - **Circuit breaker around the provider [Design].** It opens on error rate or latency. While open, admissions slow and queued attempts wait rather than fail, because a payment may not be abandoned while its outcome is unknown.
 - **Timeouts [Design for production values].** Every call carries a deadline shorter than its caller's. The provider timeout is short, and the reconciler, not a long timeout, resolves the outcome.
 
@@ -218,16 +227,16 @@ Exactly-once *effects* come from at-least-once delivery plus idempotent consumer
 - **One home region per sale.** Only the home region may change unit ownership. Reads are global through the CDN and replicas.
 - **Within a region.** Stateless services across three zones, Redis with replicas, Postgres with a synchronous replica in another zone.
 - **Across regions.** Asynchronous Postgres replication to a pre-warmed standby. Redis is rebuilt, not replicated.
-- **Fencing.** A quorum store such as etcd across three regions holds the sale's epoch and lease. A local fence row in each database bridges the two systems: every ownership update checks the epoch and an unexpired lease in the same SQL statement, and ownership transactions run under a `transaction_timeout`. The old region fences itself when it cannot renew. Each region uses its own provider credential, revoked at failover, because the provider is the only gate a paused process cannot slip past.
+- **Fencing.** A quorum store such as etcd across three regions holds the sale's epoch and lease. A local fence row in each database bridges the two systems: every ownership update checks the epoch and an unexpired lease in the same SQL statement, and ownership transactions run under a `transaction_timeout`. The old region fences itself when it cannot renew. Each region uses its own provider credential, because the provider is the only gate a paused process cannot slip past. The old credential is revoked automatically once the old lease plus a margin has expired, without waiting for operator approval: the old region is already fenced by then, so revocation cannot cost any availability.
 - **Failover.** An operator-approved compare-and-set raises the epoch after the old lease plus a margin has passed. Inherited UNKNOWN attempts are never re-sent from the new region: Adyen does not check idempotency keys across its regions. They are resolved by lookup, cancellation and a provider ledger scan, and their units stay quarantined while other stock sells.
 
 | Failure | Data loss target | Selling recovery target |
 |---|---|---|
 | Redis instance | Unpaid holds only | Under 30 s for that instance's buckets |
 | One zone | None for orders | Under 60 s |
-| Whole region | Replication lag under 5 s, paid orders recovered from the provider ledger | About 4 minutes with assumed provider timings, against a 5-minute target |
+| Whole region | Replication lag under 5 s, paid orders recovered from the provider ledger | About 4.4 minutes with assumed provider timings, against a 5-minute target |
 
-The 4-minute figure is the lease, plus the longer of the provider wait and promotion, plus the ledger scan and Redis rebuild. Consistency outranks availability for inventory, so a region failure inside a drop is reported as a breach.
+The figure adds the lease and margin, credential revocation, the provider's maximum request lifetime, the ledger visibility delay, and the ledger scan with the Redis rebuild: 30 + 15 + 10 + 120 + 60 + 30 = 265 s. Operator approval and promotion run in parallel inside the provider wait. If revocation waited for approval, recovery would take about 5.4 minutes and miss the target. All six inputs are assumptions to confirm with the real provider and infrastructure. Consistency outranks availability for inventory, so a region failure inside a drop is reported as a breach.
 
 ### 3.9 Sustaining 99.95%, including deployments and dependency outages
 
@@ -269,7 +278,7 @@ The load generator **[Built]** runs the spike shape against the real API and aud
 - **Per drop.** The same ratio is reported for every drop, plus selling pause time, because a paused waiting room produces no failed requests.
 - **Alert on symptoms and burn rate, not traffic.** A multi-window burn-rate alert fires when the error budget burns 14.4 times too fast over both 5 minutes and 1 hour, so an intentional spike does not page anyone while real failures do. Correctness alerts page at the first occurrence.
 
-Alert rules and their tests are in `deploy/prometheus` **[Built, tested with promtool in CI]**.
+Alert rules are in `deploy/prometheus`. All seven pass promtool's syntax check in CI, and five have firing tests; the latency and burn-rate rules do not **[Built]**. No Prometheus server or Alertmanager runs in this repository, so no alert has been delivered end to end **[Design]**.
 
 ### 4.4 Detecting oversell, duplicate charges and stuck reservations [Built]
 

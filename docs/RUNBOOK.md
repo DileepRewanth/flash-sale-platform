@@ -87,9 +87,9 @@ curl -s -X POST -H "Authorization: Bearer $ADMIN_TOKEN" $API/v1/admin/sales/drop
 
 This path is design only. See section 3.8 of the proposal.
 
-1. Confirm the old lease has expired plus the margin, then approve the epoch change.
-2. Revoke the old region's provider credential.
-3. Wait for the provider request lifetime and ledger delay, run the ledger scan, rebuild Redis, then resume selling.
+1. The old region's provider credential is revoked automatically once its lease plus the margin has expired. Confirm the revocation took effect.
+2. Approve the epoch change to promote the standby.
+3. Wait for the provider request lifetime and ledger delay, counted from the revocation, run the ledger scan, rebuild Redis, then resume selling.
 
 ## Communication
 

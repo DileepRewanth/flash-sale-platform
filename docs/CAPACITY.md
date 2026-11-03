@@ -8,16 +8,17 @@ Every number is labelled by source: **given** by the assignment, **measured** in
 
 **Profile.** 40,000 users arriving over 15 s against 10,000 units, with 90% of holders paying. The generator allows up to 512 requests in flight.
 
-| Run | In-flight cap per instance | Finished in | Throughput | Reserve p99 | Order p99 | Shed with 503 | Oversold | Duplicate charges | Drift |
+| Run | In-flight caps per instance | Finished in | Throughput | Reserve p99 | Order p99 | Shed with 503 | Oversold | Duplicate charges | Drift |
 |---|---|---|---|---|---|---|---|---|---|
-| Queueing: cap above the offered concurrency | 1,024 | 59 s | 830 requests/sec | 1,569 ms | 2,287 ms | 0 | 0 | 0 | 0 |
-| Shedding: cap below the offered concurrency | 64 | 15 s, on schedule | 3,258 requests/sec | 157 ms | 29 ms | 27,428 | 0 | 0 | 0 |
+| Queueing: caps above the offered concurrency | 1,024 reservations, 1,024 orders | 52 s for a 15 s schedule | 935 requests/sec | 1,009 ms | 194 ms | 0 | 0 | 0 | 0 |
+| Shedding: reservation cap below the offered concurrency | 64 reservations, 64 orders | 15 s, on schedule | 3,250 requests/sec | 179 ms | 136 ms | 26,236 reservations, 0 orders | 0 | 0 | 0 |
 
 **What this shows.**
 
 - **Correctness held in both runs.** No unit was sold twice, no order kept two charges, and Redis matched the durable store.
-- **Queueing is the failure mode from the last drop.** With 512 requests in flight and about 0.6 s each, Little's Law gives about 830 requests/sec, and transport timeouts appeared.
-- **Shedding fixes it.** Rejecting the excess at once kept admitted latency far under the 500 ms target and quadrupled useful throughput. The in-flight cap must therefore be set from measured capacity, not guessed.
+- **Queueing is the failure mode from the last drop.** With 512 requests in flight taking roughly 0.55 s each, Little's Law gives about 930 requests/sec, which matches the measured 935. The 15-second spike took 52 seconds to serve.
+- **Shedding fixes it.** Rejecting the excess at once kept admitted latency far under the 500 ms target and raised throughput about 3.5 times. The in-flight cap must therefore be set from measured capacity, not guessed.
+- **Paying users are protected.** Order routes have their own pool, so the shedding run shed no payment start. An earlier version shared one pool and shed 1,521 of 8,992 payment starts from users who already held a unit.
 - **The autoscaling signal works.** In the queueing run, in-flight requests reached 512, which the HPA formula turns into 11 replicas at 50 per replica. That decision is a simulation from real measurements; no cluster was used.
 
 ## 2. Traffic model
@@ -62,7 +63,7 @@ The provider limit is assumed to be a negotiated 1,000 charges/sec. Stripe's pub
 
 ```sh
 go build -o bin/api ./cmd/api && go build -o bin/loadgen ./cmd/loadgen
-ADDR=:18081 DEV_MODE=true ADMIN_TOKEN=local-admin SALE_UNITS=10000 MAX_INFLIGHT=64 ./bin/api &
+ADDR=:18081 DEV_MODE=true ADMIN_TOKEN=local-admin SALE_UNITS=10000 MAX_INFLIGHT=64 MAX_ORDER_INFLIGHT=64 ./bin/api &
 ADMIN_TOKEN=local-admin ./bin/loadgen -target http://localhost:18081 -users 40000 -ramp 15s -concurrency 512
 ```
 

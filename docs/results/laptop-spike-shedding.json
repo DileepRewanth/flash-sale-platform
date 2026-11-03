@@ -1,48 +1,47 @@
 {
   "audit": {
     "charged_without_order": 0,
-    "confirmed_orders": 7471,
+    "confirmed_orders": 8973,
     "drift_units": 0,
     "duplicate_charges": 0,
-    "free_units": 2529,
+    "free_units": 1027,
     "oversold_units": 0,
     "reserved_units": 0,
-    "sold_units": 7471,
+    "sold_units": 8973,
     "stuck_payments": 0,
     "total_units": 10000
   },
   "autoscaling": {
     "target_inflight_per_replica": 50,
     "samples": 60,
-    "max_inflight": 64,
-    "max_desired_replicas": 2
+    "max_inflight": 119,
+    "max_desired_replicas": 3
   },
-  "elapsed_s": 15.0392368,
+  "elapsed_s": 15.0699,
   "order": {
-    "count": 8992,
-    "p50_ms": 10.068,
-    "p95_ms": 20.338,
-    "p99_ms": 28.891,
-    "max_ms": 59.73,
+    "count": 8973,
+    "p50_ms": 14.803,
+    "p95_ms": 55.884,
+    "p99_ms": 136.307,
+    "max_ms": 259.847,
     "codes": {
-      "202": 7471,
-      "503": 1521
+      "202": 8973
     }
   },
   "ramp_s": 15,
-  "requests": 48992,
+  "requests": 48973,
   "reserve": {
     "count": 40000,
-    "p50_ms": 1.141,
-    "p95_ms": 117.802,
-    "p99_ms": 156.88,
-    "max_ms": 285.944,
+    "p50_ms": 2.044,
+    "p95_ms": 113.967,
+    "p99_ms": 178.782,
+    "max_ms": 347.778,
     "codes": {
       "201": 10000,
-      "409": 4093,
-      "503": 25907
+      "409": 3764,
+      "503": 26236
     }
   },
-  "throughput_rps": 3257.6121149977507,
+  "throughput_rps": 3249.72295768386,
   "users": 40000
 }
