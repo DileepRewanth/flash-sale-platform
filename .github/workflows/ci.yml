@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: vet
+        run: go vet ./...
+      - name: test with the race detector
+        run: go test -race -count=1 ./...
+
+  alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check and test alert rules
+        run: |
+          docker run --rm -v "$PWD/deploy/prometheus:/rules" -w /rules --entrypoint /bin/promtool prom/prometheus:v2.53.0 check rules alerts.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/rules" -w /rules --entrypoint /bin/promtool prom/prometheus:v2.53.0 test rules alerts_test.yml
+
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: spike test against the API in dev mode
+        env:
+          ADMIN_TOKEN: ci-admin-token
+        run: |
+          go build -o api ./cmd/api
+          go build -o loadgen ./cmd/loadgen
+          ADDR=:18080 DEV_MODE=true SALE_UNITS=10000 ./api > api.log 2>&1 &
+          for i in $(seq 1 40); do curl -sf localhost:18080/healthz && break; sleep 0.5; done
+          ./loadgen -target http://localhost:18080 -users 40000 -ramp 15s -concurrency 512 | tee load-result.json
+          echo "runner CPUs: $(nproc)"
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: scan full history for secrets
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.18.4 detect --source /repo --redact -v

@@ -1,0 +1,39 @@
+# DESIGN: this config shows how the exported metric is consumed. It has not been
+# applied to a cluster. The load generator reproduces its decisions from real
+# measurements with internal/autoscale, which uses the same HPA formula.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: flashsale-api
+spec:
+  scaleTargetRef:
+    name: flashsale-api
+  minReplicaCount: 4
+  maxReplicaCount: 200
+  pollingInterval: 5        # seconds; CPU-based scaling would react only after queues form
+  cooldownPeriod: 300
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 300   # drops end abruptly and can restart
+  triggers:
+    # Leading signal: requests in flight across the fleet, 50 per replica.
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        query: sum(flashsale_http_inflight_requests{job="flashsale-api"})
+        threshold: "50"
+    # Pre-warm for a scheduled drop: hold 120 replicas from 10 minutes before it opens.
+    - type: cron
+      metadata:
+        timezone: UTC
+        start: "50 17 * * *"
+        end: "30 18 * * *"
+        desiredReplicas: "120"

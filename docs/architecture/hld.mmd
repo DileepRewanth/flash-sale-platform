@@ -1,0 +1,45 @@
+flowchart LR
+  U["Clients: browsers and apps"]
+
+  subgraph EDGE["Global edge - failure boundary: CDN vendor (design)"]
+    CDN["CDN cache: catalog, availability bands, waiting room status"]
+    WAF["WAF, rate limits, bot scoring"]
+    WR["Virtual waiting room: signed tickets, paced watermark"]
+  end
+
+  subgraph HOME["Home region for the sale - failure boundary: region"]
+    GW["API gateway: authentication"]
+    subgraph ZONES["Stateless services across 3 zones - failure boundary: zone"]
+      API["Reservation and order API: load shedding, bulkheads (built)"]
+      WK["Payment worker: dispatch, reconcile, expiry, refunds (built)"]
+      DET["Detectors: oversell, duplicate charge, drift (built)"]
+    end
+    R[("Redis buckets: free units and holds (built)")]
+    PG[("Durable store: units, orders, attempts, outbox. Postgres primary plus sync replica")]
+    K[["Kafka: order events partitioned by order ID (design)"]]
+    OBS["Prometheus, alerts, KEDA autoscaler"]
+  end
+
+  subgraph STANDBY["Standby region - failure boundary: region"]
+    PG2[("Async Postgres replica")]
+    QS["Quorum store: sale epoch and lease"]
+  end
+
+  PSP["Payment provider: rate limited, third party"]
+
+  U --> CDN --> WAF --> WR --> GW --> API
+  API -- "1 atomic hold (Lua)" --> R
+  API -- "2 guarded claim plus outbox" --> PG
+  PG -- "outbox relay" --> K
+  K --> WK
+  WK -- "3-4 charge with idempotency key" --> PSP
+  PSP -- "webhooks" --> API
+  WK -- "5 apply result" --> PG
+  WK -- "release events" --> R
+  DET --> R
+  DET --> PG
+  DET -- "ledger scan" --> PSP
+  PG -. "async replication" .-> PG2
+  QS -. "lease and fencing" .-> PG
+  API -- "in-flight metric" --> OBS
+  OBS -- "scale out" --> API

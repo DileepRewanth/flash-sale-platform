@@ -1,0 +1,71 @@
+groups:
+  - name: flashsale-correctness
+    rules:
+      - alert: FlashSaleOversold
+        expr: max(flashsale_oversold_units) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: A unit has more than one confirmed order
+          runbook: docs/RUNBOOK.md#oversell-detected
+      - alert: FlashSaleDuplicateCharge
+        expr: max(flashsale_duplicate_charges) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: An order has more than one kept charge
+          runbook: docs/RUNBOOK.md#duplicate-charge-detected
+      - alert: FlashSaleChargedWithoutOrder
+        expr: max(flashsale_charged_without_order) > 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: A charge has no confirmed order and no refund
+          runbook: docs/RUNBOOK.md#charged-without-an-order
+      - alert: FlashSaleInventoryDrift
+        expr: max(flashsale_inventory_drift_units) > 0
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Redis inventory disagrees with the durable store
+          runbook: docs/RUNBOOK.md#inventory-drift
+      - alert: FlashSaleStuckPayments
+        expr: max(flashsale_stuck_payments) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: Payments are unresolved past the hard deadline
+          runbook: docs/RUNBOOK.md#payments-stuck-past-the-hard-deadline
+
+  - name: flashsale-slo
+    rules:
+      - alert: FlashSaleReservationLatencyHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(flashsale_http_request_duration_seconds_bucket{route="reserve"}[5m]))) > 0.5
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Reservation p99 is above 500 ms
+          runbook: docs/RUNBOOK.md#latency-or-error-budget-burn
+      # Multi-window burn rate: pages only when the 99.95% budget burns 14.4 times
+      # too fast over both 5 minutes and 1 hour. Traffic volume alone never pages,
+      # so an intentional spike stays quiet. Shed requests use code "shed" and are
+      # tracked as rejection rate, not as server errors.
+      - alert: FlashSaleErrorBudgetBurn
+        expr: |
+          (
+            sum(rate(flashsale_http_requests_total{route=~"reserve|create_order",code=~"5.."}[5m]))
+              / sum(rate(flashsale_http_requests_total{route=~"reserve|create_order"}[5m]))
+          ) > (14.4 * 0.0005)
+          and
+          (
+            sum(rate(flashsale_http_requests_total{route=~"reserve|create_order",code=~"5.."}[1h]))
+              / sum(rate(flashsale_http_requests_total{route=~"reserve|create_order"}[1h]))
+          ) > (14.4 * 0.0005)
+        labels:
+          severity: page
+        annotations:
+          summary: Reservation error budget is burning too fast
+          runbook: docs/RUNBOOK.md#latency-or-error-budget-burn

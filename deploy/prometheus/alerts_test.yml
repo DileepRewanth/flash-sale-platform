@@ -1,0 +1,57 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'flashsale_oversold_units{instance="api-1"}'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FlashSaleOversold
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FlashSaleOversold
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: A unit has more than one confirmed order
+              runbook: docs/RUNBOOK.md#oversell-detected
+
+  - interval: 1m
+    input_series:
+      - series: 'flashsale_inventory_drift_units{instance="api-1"}'
+        values: '0 3 3 3 3 3'
+    alert_rule_test:
+      # Pending for the first 2 minutes, so a transient relay gap does not alert.
+      - eval_time: 2m
+        alertname: FlashSaleInventoryDrift
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FlashSaleInventoryDrift
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: Redis inventory disagrees with the durable store
+              runbook: docs/RUNBOOK.md#inventory-drift
+
+  - interval: 1m
+    input_series:
+      - series: 'flashsale_duplicate_charges{instance="api-1"}'
+        values: '0 0 0 2'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FlashSaleDuplicateCharge
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: FlashSaleDuplicateCharge
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: An order has more than one kept charge
+              runbook: docs/RUNBOOK.md#duplicate-charge-detected
